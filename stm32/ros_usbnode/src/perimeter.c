@@ -26,7 +26,11 @@
 *******************************************************************************/
 #define PERIMETER_NBPTS 1284 /* 12 ms / 9.333 µs */
 #define PERIMETER_OVERSAMPLING 3
-#define PERIMETER_AVERAGE_N 3
+#define PERIMETER_FILTER_N 5
+
+#if (PERIMETER_FILTER_N % 2) == 0
+#error Perimeter median filter requires an odd sample count
+#endif
 
 /******************************************************************************
 * Module Preprocessor Macros
@@ -55,8 +59,8 @@ static const int32_t *sigcode=NULL;
 static int sigcode_length;
 static int print_pos=-1;
 
-float coilSigSum[COIL_OFF] = {0.0,0.0,0.0};
-int coilSigN[COIL_OFF]={0,0,0};
+static float coilSamples[COIL_OFF][PERIMETER_FILTER_N] = {{0.0}};
+static uint8_t coilSampleN[COIL_OFF] = {0,0,0};
 
 perimeter_CoilNumber_e idxCoil = COIL_LEFT;
 
@@ -64,6 +68,8 @@ perimeter_CoilNumber_e idxCoil = COIL_LEFT;
 * Function Prototypes
 *******************************************************************************/
 static double corrFilter(void);
+static float perimeter_Median(const float *samples, uint8_t count);
+static void perimeter_ResetSamples(void);
 void perimeter_SetCoil(perimeter_CoilNumber_e idx);
 
 /******************************************************************************
@@ -167,8 +173,9 @@ void Perimeter_vApp(void){
     perimeter_bFlagIT = false;
 
     if (print_pos<0) {
-      coilSigSum[idxCoil]+=corrFilter();
-      coilSigN[idxCoil]++;
+      if (coilSampleN[idxCoil] < PERIMETER_FILTER_N) {
+        coilSamples[idxCoil][coilSampleN[idxCoil]++] = corrFilter();
+      }
       idxCoil ++;
       if(idxCoil == COIL_OFF){
         idxCoil = COIL_LEFT;
@@ -202,9 +209,7 @@ void Perimeter_ListenOn(uint8_t sig) {
     if (!oldsigcode) {
       idxCoil=COIL_LEFT;
       perimeter_SetCoil(idxCoil);
-      for (int i=0; i<COIL_OFF; i++) {
-        coilSigSum[i]=coilSigN[i]=0;
-      }
+      perimeter_ResetSamples();
       HAL_ADC_Start_DMA(&ADC_Handle,(uint32_t*)&pu16_PerimeterADC_buffer[0],PERIMETER_NBPTS);
       __HAL_DMA_DISABLE_IT(&hdma_adc,DMA_IT_HT);
     }
@@ -222,15 +227,15 @@ int Perimeter_IsActive(void) {
 }
 
 int Perimeter_UpdateMsg(float *left,float *center,float *right) {
-  if (!sigcode || coilSigN[COIL_LEFT]<PERIMETER_AVERAGE_N
-      || coilSigN[COIL_MIDDLE]<PERIMETER_AVERAGE_N  || coilSigN[COIL_RIGHT]<PERIMETER_AVERAGE_N)
+  if (!sigcode || coilSampleN[COIL_LEFT]<PERIMETER_FILTER_N
+      || coilSampleN[COIL_MIDDLE]<PERIMETER_FILTER_N  || coilSampleN[COIL_RIGHT]<PERIMETER_FILTER_N)
   {
     return 0;
   }
-	*left=coilSigSum[COIL_LEFT]/coilSigN[COIL_LEFT];
-	*center=coilSigSum[COIL_MIDDLE]/coilSigN[COIL_MIDDLE];
-	*right=coilSigSum[COIL_RIGHT]/coilSigN[COIL_RIGHT];
-  for (int i=0; i<COIL_OFF; i++) coilSigSum[i]=coilSigN[i]=0;
+	*left=perimeter_Median(coilSamples[COIL_LEFT], coilSampleN[COIL_LEFT]);
+	*center=perimeter_Median(coilSamples[COIL_MIDDLE], coilSampleN[COIL_MIDDLE]);
+	*right=perimeter_Median(coilSamples[COIL_RIGHT], coilSampleN[COIL_RIGHT]);
+  perimeter_ResetSamples();
   return 1;
 }
 
@@ -242,6 +247,29 @@ void PERIMETER_vITHandle(void){
   /* stop DMA and set flag */
   HAL_ADC_Stop_DMA(&ADC_Handle);
   perimeter_bFlagIT = true;
+}
+
+static float perimeter_Median(const float *samples, uint8_t count) {
+  float sorted[PERIMETER_FILTER_N];
+
+  for (uint8_t i=0; i<count; i++) {
+    float value = samples[i];
+    uint8_t j = i;
+
+    while (j > 0 && sorted[j - 1] > value) {
+      sorted[j] = sorted[j - 1];
+      j--;
+    }
+    sorted[j] = value;
+  }
+
+  return sorted[count / 2];
+}
+
+static void perimeter_ResetSamples(void) {
+  for (int i=0; i<COIL_OFF; i++) {
+    coilSampleN[i]=0;
+  }
 }
 
 
