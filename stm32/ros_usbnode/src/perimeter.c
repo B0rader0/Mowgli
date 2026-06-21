@@ -54,7 +54,7 @@ static const int32_t sigcode2[]={ -2, -3, 0, 3, 3, -1, -2, -1, 3, 3, 3, 3, 3, 2,
 #define SIGCODE2_LENGTH (sizeof(sigcode2)/sizeof(int32_t))
 uint16_t pu16_PerimeterADC_buffer[PERIMETER_NBPTS]; /* Input from perimeter coil */
 
-bool perimeter_bFlagIT = false;
+static volatile bool perimeter_bFlagIT = false;
 static const int32_t *sigcode=NULL;
 static int sigcode_length;
 static int print_pos=-1;
